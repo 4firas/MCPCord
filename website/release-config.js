@@ -1,8 +1,8 @@
 /* Public release facts only. Never put credentials here. */
 window.MCPCORD_RELEASE = Object.freeze({
-  "repository": "https://github.com/fourfiras/MCPCord",
+  "repository": "https://github.com/4firas/MCPCord",
   "docsPath": "#readme",
-  "installCommand": "uv tool install git+https://github.com/fourfiras/MCPCord.git && mcpcord setup",
+  "installCommand": "uv tool install git+https://github.com/4firas/MCPCord.git && mcpcord setup",
   "platformLabel": "macOS · Windows · Linux",
   "prerequisites": "Requires uv, Git and the Codex CLI; Python 3.11+ can be supplied by uv. Linux also needs secret-tool and an unlocked desktop keyring. On PowerShell 5, run the two commands separately.",
   "connectionDetails": "Acknowledge the personal-account risk, then enter your token in a hidden local prompt. It is stored in macOS Keychain, Windows Credential Manager or Linux Secret Service. Setup keeps an existing MCPCord registration and collects no messages.",

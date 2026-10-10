@@ -1,6 +1,6 @@
 # MCPCord
 
-Discord, minus the tab hunting. [Try the fictional demo](https://fourfiras.github.io/MCPCord/).
+Discord, minus the tab hunting. [Try the fictional demo](https://4firas.github.io/MCPCord/).
 
 Read DMs and server conversations from your local MCP client. Find messages by exact user ID, follow threads, pull a cited digest, or run an explicit history analysis. Every Discord request is a GET. No posting, reactions, joining threads, marking messages read, or background tracking.
 
@@ -11,7 +11,7 @@ Read DMs and server conversations from your local MCP client. Find messages by e
 You need [uv](https://docs.astral.sh/uv/getting-started/installation/), Git, and the [Codex CLI](https://developers.openai.com/codex/cli/). MCPCord requires Python 3.11 or newer; uv can provide it.
 
 ```sh
-uv tool install git+https://github.com/fourfiras/MCPCord.git && mcpcord setup
+uv tool install git+https://github.com/4firas/MCPCord.git && mcpcord setup
 ```
 
 In Windows PowerShell 5, run the two commands on separate lines. PowerShell 7 supports `&&`.
@@ -73,4 +73,4 @@ uv run python scripts/benchmark.py 50000
 
 Tests and benchmarks use fabricated data. No real export, account ID, token or private chat belongs in this repository. [Validation](docs/validation.md) · [Architecture](docs/architecture.md) · [Tools](docs/tools.md) · [Security](SECURITY.md) · [Attribution](NOTICE.md)
 
-MIT licensed. Built by [fourfiras](https://github.com/fourfiras).
+MIT licensed. Built by [4firas](https://github.com/4firas).

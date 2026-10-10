@@ -82,9 +82,13 @@ def validate_scope(data):
         raise ReaderError("Explicitly configure at least one channel; no inbox discovery is implemented.")
     if mode == "discover_accessible" and channels:
         raise ReaderError("Discovery scope must not include a manual channel allowlist.")
+    # Accept old scope files without silently retaining their arbitrary age caps.
+    # Work is bounded by pages, requests and time, never by message age.
+    for key in ("max_window_hours", "max_history_days"):
+        if key in data:
+            integer(data[key], 1, 2**31 - 1)
     return {"mode": mode, "channels": channels,
-            "max_window_hours": integer(data.get("max_window_hours", 24), 1, 168),
-            "max_history_days": integer(data.get("max_history_days", 7), 1, 30),
+            "history_date_limit": None,
             "max_pages_per_channel": integer(data.get("max_pages_per_channel", 5), 1, 10),
             "max_requests_per_refresh": integer(data.get("max_requests_per_refresh", 10), 1, 20)}
 
@@ -140,12 +144,8 @@ class LiveReader:
         ids = self._ids(channel_ids)
         since, until = timestamp(since), timestamp(until)
         now = self.now()
-        if as_time(since) < now - timedelta(days=self.scope["max_history_days"]):
-            raise ReaderError("Requested start precedes the configured history limit.")
-        if since >= until or as_time(until) > now:
-            raise ReaderError("Choose since < until <= now; future coverage cannot be promised.")
-        if as_time(until) - as_time(since) > timedelta(hours=self.scope["max_window_hours"]):
-            raise ReaderError("Requested interval exceeds the configured maximum window.")
+        if as_time(since).year < 2015 or since >= until or as_time(until) > now:
+            raise ReaderError("Choose a Discord-era interval with since < until <= now.")
         return ids, since, until
 
     def list_channels(self):
@@ -175,7 +175,7 @@ class LiveReader:
             complete = False
             for _ in range(self.scope["max_pages_per_channel"]):
                 if requests >= self.scope["max_requests_per_refresh"]:
-                    raise LiveError("page_limit", "Refresh page budget reached; narrow the date/channel scope.")
+                    raise LiveError("page_limit", "Refresh page budget reached. Use start_history_import and continue_history_import to scan this full interval in resumable slices; no date narrowing is required.")
                 requests += 1
                 page = bounded_list(self.client.messages(cid, before, deadline), 100)
                 if not page:
@@ -200,7 +200,7 @@ class LiveReader:
                     break
                 before = str(min_id)
             if not complete:
-                raise LiveError("page_limit", "Channel page budget reached; narrow the requested date window.")
+                raise LiveError("page_limit", "Channel page budget reached. Use start_history_import and continue_history_import to scan this full interval in resumable slices; no date narrowing is required.")
             observed = timestamp(self.now().isoformat())
             configured = self.channels[cid]
             export = {"guild": {"id": "0" if configured["guild_id"] == "@me" else configured["guild_id"],
@@ -275,8 +275,8 @@ class LiveReader:
         ids = self._ids([channel_id])
         message_id = snowflake(message_id)
         now = self.now()
-        if not now - timedelta(days=self.scope["max_history_days"]) <= id_time(message_id) <= now:
-            raise ReaderError("Message ID is outside the configured history period.")
+        if id_time(message_id) > now:
+            raise ReaderError("Message ID is in the future.")
         attempted = timestamp(now.isoformat())
         try:
             self.client.begin_refresh(min(3, self.scope["max_requests_per_refresh"]))

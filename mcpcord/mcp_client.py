@@ -40,8 +40,9 @@ class RegisteredSession:
             self.process = subprocess.Popen([command, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                             stderr=subprocess.DEVNULL, cwd=transport.get("cwd") or ROOT)
             threading.Thread(target=self._read_responses, daemon=True).start()
-            self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
-                                       "clientInfo": {"name": "mcpcord-local-client", "version": "1"}})
+            initialized = self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                                     "clientInfo": {"name": "mcpcord-local-client", "version": "1"}})
+            self.server_info = initialized.get("serverInfo", {})
             self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         except ReaderError:
             self.close()

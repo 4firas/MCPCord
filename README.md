@@ -30,7 +30,7 @@ No token in a config file, environment variable, shell argument, website, or cha
 - **Find current DMs.** Recipient-ID lookup covers the current DM/group-DM list. Membership does not prove someone sent a message.
 - **Read threads and forum posts.** Active and archived discovery is separate and paginated. No joining or unarchiving.
 - **Analyze visible activity.** Per-day or per-hour message counts, IANA timezones and DST, participant counts and source links. No guesses about presence, location or personal traits.
-- **Collect history when asked.** Explicit jobs, a fixed end time, bounded slices, atomic checkpoints, cancellation, and per-channel coverage. Full-history jobs do not have the regular seven-day window cap.
+- **Read back to the first available message.** No message-age or total-page cutoff. Explicit history jobs keep a fixed end time, resume in bounded slices, and cross-check the oldest available message before accepting an empty end page. Checkpoints and messages commit together; storage limits pause work explicitly.
 - **Read exports offline.** DiscordChatExporter JSON, overlapping imports, edit-aware deduplication and source-linked excerpts. An export is a snapshot, not a deletion audit.
 
 Example requests:
@@ -44,6 +44,8 @@ Example requests:
 > Collect all available history from these channels. Show the channel scope first, then work in resumable slices.
 
 ## History and privacy
+
+Date windows and individual message lookups can reach any Discord-era date. For long histories, request `start_history_import` with explicit `channel_ids` and `all_history: true`, then repeat `continue_history_import` with the same `job_id` while `needs_continuation` is true. The default three-page slice (maximum ten) limits one call, not the whole history. Inspect per-channel `page_evidence` to distinguish an empty API response from a requested date boundary. A conflicting earliest-message check pauses with `history_gap` and keeps the cursor unchanged.
 
 **Content persistence is off by default.** Jobs and collected messages stay in process memory and disappear when it exits. They can resume between calls in that same process. Restart-resumable storage requires an explicit launch-time opt-in; tools cannot switch it on or pick a disk path.
 

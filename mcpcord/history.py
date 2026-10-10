@@ -39,7 +39,7 @@ class HistoryMixin(LiveReader):
             raise ReaderError("Use a Discord-era window with since < until <= now.")
         result = self._history().create_job({cid: self.channels[cid] for cid in ids}, since, until, all_history)
         result["network_requested"] = False
-        result["next_step"] = "Inspect this explicit channel snapshot, then call continue_history_import for bounded slices. Discover active and archived threads separately before starting a server job."
+        result["next_step"] = "Inspect this explicit channel snapshot, then repeat continue_history_import while needs_continuation is true. Each call has a work budget; there is no total page or message-age cutoff. Storage quotas pause work explicitly. Discover active and archived threads separately before starting a server job."
         return live_envelope(result)
 
     def history_import_status(self, job_id):
@@ -89,7 +89,7 @@ class HistoryMixin(LiveReader):
                         continue
                     raise
                 observed = timestamp(self.now().isoformat())
-                normalized, seen = [], set()
+                normalized, seen, returned = [], set(), []
                 following = int(before)
                 reached_start = False
                 for raw in raw_page:
@@ -98,13 +98,30 @@ class HistoryMixin(LiveReader):
                     if mid >= int(before) or mid in seen:
                         raise LiveError("invalid_response", "History page stalled or repeated a message identity; checkpoint was not advanced.")
                     seen.add(mid)
+                    returned.append({"id": row["id"], "timestamp": row["timestamp"]})
                     following = min(following, mid)
                     if row["timestamp"] < job["request"]["since"]:
                         reached_start = True
                     elif row["timestamp"] < job["request"]["until"]:
                         normalized.append(row)
-                # Continue after short pages; an empty page or requested lower bound ends traversal.
-                store.commit_page(job_id, cid, before, str(following), normalized, not raw_page or reached_start)
+                # An independent oldest-first query guards against a prematurely empty
+                # reverse page. Never jump to its ID: that could skip intervening history.
+                start_check = None
+                if not raw_page and job["request"]["all_history"]:
+                    first = bounded_list(self.client.first_message(cid, deadline), 1)
+                    start_check = {"method": "after=0&limit=1", "returned_count": len(first)}
+                    if first:
+                        row = normalize_message(api_to_export(first[0], self.channels[cid]), self.channels[cid], observed, "discord-history-start")
+                        start_check.update({"message_id": row["id"], "timestamp": row["timestamp"]})
+                        if int(row["id"]) < int(before) and row["timestamp"] < job["request"]["until"]:
+                            raise LiveError("history_gap", "An empty reverse page conflicts with an older message returned by the earliest-message check. The checkpoint is unchanged; retry this slice. No beginning-of-history claim is valid.")
+                evidence = {"requested_before": before, "returned_count": len(raw_page),
+                            "next_before": str(following), "retained_count": len(normalized),
+                            "oldest_returned": min(returned, key=lambda r: int(r["id"])) if returned else None,
+                            "stop_reason": "empty_response" if not raw_page else ("requested_lower_bound" if reached_start else None),
+                            "earliest_message_check": start_check}
+                # Short pages and per-call budgets never mark the channel finished.
+                store.commit_page(job_id, cid, before, str(following), normalized, not raw_page or reached_start, evidence)
                 pages += 1
         except (ReaderError, KeyboardInterrupt) as exc:
             if isinstance(exc, KeyboardInterrupt):
@@ -127,7 +144,9 @@ class HistoryMixin(LiveReader):
             store.set_job_state(job_id, state)
         result = store.job(job_id)
         result.update({"pages_this_slice": pages, "error": error,
-                       "coverage_note": "Traversed means the requested pagination boundary was reached, not that all historical messages exist or are accessible. Short pages are continued; empty pages can still reflect permissions. Newer messages after the fixed until boundary require a new job."})
+                       "slice_stop_reason": error["code"] if error else ("page_budget" if result["needs_continuation"] and pages >= max_pages else "time_budget" if result["needs_continuation"] else "channels_finished"),
+                       "next_step": "Repeat continue_history_import with the same job_id after any retry_at cooldown." if result["needs_continuation"] else "Inspect each channel's page_evidence and access errors before describing coverage.",
+                       "coverage_note": "Traversed means the requested pagination boundary was reached, not that all historical messages exist or are accessible. Short pages are continued. All-history empty pages are cross-checked with after=0; both routes can still reflect permissions or deletion. Newer messages after the fixed until boundary require a new job."})
         return live_envelope(result, error=error is not None)
 
     def query_history(self, channel_ids, since, until, user_id=None, relationship="author", limit=25, cursor=None):

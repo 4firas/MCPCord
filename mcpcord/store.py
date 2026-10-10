@@ -15,7 +15,7 @@ from .reader import ReaderError, canonical, fingerprint, integer, snowflake, tim
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL);
-INSERT OR IGNORE INTO meta VALUES ('schema',1),('revision',0),('count',0),('bytes',0);
+INSERT OR IGNORE INTO meta VALUES ('schema',2),('revision',0),('count',0),('bytes',0);
 CREATE TABLE IF NOT EXISTS channels(id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS messages(
  channel_id TEXT NOT NULL REFERENCES channels(id), id TEXT NOT NULL, sort_id TEXT NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS mentions(user_id TEXT NOT NULL, channel_id TEXT NOT N
 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, state TEXT NOT NULL, request TEXT NOT NULL, updated TEXT NOT NULL, retry_at TEXT);
 CREATE TABLE IF NOT EXISTS checkpoints(job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
  channel_id TEXT NOT NULL REFERENCES channels(id), before_id TEXT NOT NULL, state TEXT NOT NULL,
- pages INTEGER NOT NULL DEFAULT 0, observed_rows INTEGER NOT NULL DEFAULT 0, error TEXT,
+ pages INTEGER NOT NULL DEFAULT 0, observed_rows INTEGER NOT NULL DEFAULT 0, error TEXT, page_evidence TEXT,
  PRIMARY KEY(job_id,channel_id));
 """
 
@@ -75,8 +75,12 @@ class HistoryStore:
             page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
             self.db.execute(f"PRAGMA max_page_count={256 * 1024 * 1024 // page_size}")
             self.db.executescript(SCHEMA)
-            if self.metric("schema") != 1:
-                raise ReaderError("Unsupported MCPCord database schema; no automatic migration was attempted.")
+            if self.metric("schema") == 1:
+                with self.transaction():
+                    self.db.execute("ALTER TABLE checkpoints ADD COLUMN page_evidence TEXT")
+                    self.db.execute("UPDATE meta SET value=2 WHERE key='schema'")
+            if self.metric("schema") != 2:
+                raise ReaderError("Unsupported MCPCord database schema.")
             self.purge_expired()
         except sqlite3.Error:
             raise ReaderError("MCPCord storage could not be opened; no database content was logged.") from None
@@ -182,8 +186,12 @@ class HistoryStore:
         row = self.db.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
         if row is None:
             raise ReaderError("Unknown or expired history job.")
-        checks = [dict(c) for c in self.db.execute("SELECT channel_id,before_id,state,pages,observed_rows,error FROM checkpoints WHERE job_id=? ORDER BY channel_id", (jid,))]
+        checks = [dict(c) for c in self.db.execute("SELECT channel_id,before_id,state,pages,observed_rows,error,page_evidence FROM checkpoints WHERE job_id=? ORDER BY channel_id", (jid,))]
+        for check in checks:
+            check["page_evidence"] = json.loads(check["page_evidence"]) if check["page_evidence"] else None
+        pending = sum(c["state"] in ("pending", "running") for c in checks)
         return {"job_id": jid, "state": row["state"], "request": json.loads(row["request"]), "channels": checks,
+                "needs_continuation": bool(pending), "pending_channels": pending, "total_page_limit": None,
                 "updated_at": row["updated"], "retry_at": row["retry_at"], "persistent": self.persistent,
                 "restart_resumable": self.persistent, "retention_days": self.retention_days,
                 "stored_message_count": self.metric("count"), "stored_payload_bytes": self.metric("bytes"),
@@ -194,15 +202,15 @@ class HistoryStore:
         with self.transaction():
             self.db.execute("UPDATE jobs SET state=?,updated=?,retry_at=? WHERE id=?", (state, timestamp(self.now().isoformat()), retry_at, jid))
 
-    def commit_page(self, jid, cid, expected_before, following, rows, exhausted):
+    def commit_page(self, jid, cid, expected_before, following, rows, exhausted, evidence=None):
         with self.transaction():
             checkpoint = self.db.execute("SELECT before_id,state FROM checkpoints WHERE job_id=? AND channel_id=?", (jid, cid)).fetchone()
             if checkpoint is None or checkpoint["before_id"] != expected_before or checkpoint["state"] not in ("pending", "running"):
                 raise ReaderError("History checkpoint changed; restart this slice from current status.")
             for row in rows:
                 self._upsert(row)
-            self.db.execute("UPDATE checkpoints SET before_id=?,state=?,pages=pages+1,observed_rows=observed_rows+?,error=NULL WHERE job_id=? AND channel_id=?",
-                            (following, "traversed" if exhausted else "running", len(rows), jid, cid))
+            self.db.execute("UPDATE checkpoints SET before_id=?,state=?,pages=pages+1,observed_rows=observed_rows+?,error=NULL,page_evidence=? WHERE job_id=? AND channel_id=?",
+                            (following, "traversed" if exhausted else "running", len(rows), canonical(evidence) if evidence else None, jid, cid))
             self.db.execute("UPDATE jobs SET updated=? WHERE id=?", (timestamp(self.now().isoformat()), jid))
 
     def fail_channel(self, jid, cid, error):

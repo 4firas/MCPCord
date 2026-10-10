@@ -10,8 +10,7 @@ from .credentials import provider_name, store_credential
 from .live import validate_scope
 from .reader import ReaderError, strict_json
 
-DEFAULT_SCOPE = {"mode": "discover_accessible", "max_window_hours": 168, "max_history_days": 7,
-                 "max_pages_per_channel": 10, "max_requests_per_refresh": 20}
+DEFAULT_SCOPE = {"mode": "discover_accessible", "max_pages_per_channel": 10, "max_requests_per_refresh": 20}
 
 
 def config_directory():

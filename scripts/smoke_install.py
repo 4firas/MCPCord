@@ -4,11 +4,14 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import venv
 
 
 root = Path(__file__).resolve().parents[1]
-wheel = next((root / "dist").glob("mcpcord-*.whl"))
+version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+wheel = root / "dist" / f"mcpcord-{version}-py3-none-any.whl"
+assert wheel.is_file(), "Build the current version before running the install smoke test."
 with tempfile.TemporaryDirectory(prefix="mcpcord-install-") as tmp:
     work = Path(tmp)
     environment = work / "venv"
@@ -32,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix="mcpcord-install-") as tmp:
                              input=wire, capture_output=True, text=True, cwd=work, timeout=10, check=True)
     replies = [json.loads(line) for line in process.stdout.splitlines()]
     assert replies[0]["result"]["serverInfo"]["name"] == "mcpcord"
+    assert replies[0]["result"]["serverInfo"]["version"] == version
     assert len(replies[1]["result"]["tools"]) == 4
     assert replies[2]["result"]["structuredContent"]["data"]["channels"]
     assert not process.stderr

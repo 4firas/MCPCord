@@ -4,15 +4,17 @@ A local STDIO MCP server sits between the assistant and a fixed-origin GET-only 
 
 ## Three reading paths
 
-1. **Fresh windows:** refresh selected channels, then return a paginated in-memory snapshot. Ordinary reads default to seven days of lookback and at most 168 hours per query. Continuations expire after ten minutes.
+1. **Fresh windows:** refresh selected channels over any explicit Discord-era date range, then return a paginated in-memory snapshot. There is no message-age or date-span cutoff. Page/request/time budgets bound each refresh; use a resumable history job when the snapshot exceeds them. Snapshot cursors expire after ten minutes. Legacy `max_history_days` and `max_window_hours` scope keys remain accepted but no longer restrict dates.
 2. **Discord-index search:** one server or discovered conversation, one exact user-ID relationship, one bounded API page. Handles indexing-pending responses and server-directed cooldowns. Short result pages do not end pagination; reported totals are advisory. Replies without a verifiable target are excluded, with a count.
-3. **Explicit history collection:** capture selected channel IDs and a fixed `[since, until)` boundary, then collect at most ten pages per continuation. New records and their checkpoint commit in one transaction. Short history pages continue until an empty page or the requested lower boundary. Nothing runs between calls.
+3. **Explicit history collection:** capture selected channel IDs and a fixed `[since, until)` boundary, then collect at most ten history pages per continuation. There is no total-page cutoff. New records, pagination evidence and checkpoint commit in one transaction. Short pages continue. Before an all-history scan accepts an empty end page, a second query (`after=0&limit=1`) checks the earliest currently available message. An older uncollected result pauses without advancing the cursor. These additional checks share the twenty-request and twenty-second budgets; budget exhaustion remains resumable. Nothing runs between calls.
 
 Message IDs stay decimal strings. Date filters use normalized UTC timestamps with explicit offsets. Activity summaries use the requested IANA timezone; repeated DST hours include their offsets. Source links use validated guild/channel/message IDs, with `@me` for direct conversations.
 
 ## State and failures
 
 History states distinguish paused, cancelled, partial and traversed. “Traversed” describes pagination, not complete historical coverage. Permission-denied channels become unavailable, authentication failure pauses work, and rate-limit cooldowns can be checkpointed. A killed process rolls back an uncommitted page. Cancellation between slices retains earlier observations; resuming a cancelled job requires an explicit option.
+
+`needs_continuation` and `slice_stop_reason` distinguish a work-budget pause from a terminal channel boundary. Each checkpoint retains metadata-only `page_evidence`. Database schema 2 adds this nullable evidence column to schema 1 in a transaction, preserving existing observations and cursors. Jobs finished by earlier versions have no new end verification; start a new explicit job to obtain it.
 
 SQLite indexes cover channel/time, author/time, mentions and message identity. Local query cursors use a keyset and index revision, so a changed index invalidates old pages instead of silently mixing snapshots. Analysis streams indexed rows. Resource quotas bound stored payload, database pages, group counts, response sizes and request sizes.
 

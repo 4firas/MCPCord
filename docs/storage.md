@@ -14,4 +14,6 @@ Retention is based on **observation time**, not message creation time. A 2018 me
 
 The latest observed version is retained. Older edits cannot roll it back. Missing rows never prove deletion. Refresh overlapping windows or re-run a collection to observe changes; there is no gateway watcher. A restarted job requires fresh discovery of pending channels before more requests. Stored IDs do not grant live access.
 
+Version 0.3.2 adds pagination evidence to existing schema-1 databases in a transactional schema-2 upgrade. Existing messages and checkpoints are retained; completed older jobs have no retroactive earliest-message check. Older MCPCord versions cannot open schema 2. This upgrade occurs only when an explicitly enabled persistent store is opened; it does not turn storage on.
+
 To remove retained data, stop the MCP process and delete the database and any adjacent journal. Remove the MCP registration separately if desired. Revoke the Discord credential separately; deleting a database or registration does not revoke it.

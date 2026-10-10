@@ -142,6 +142,34 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "request_limit")
         self.assertEqual(len(transport.calls), 1)
 
+    def test_first_message_probe_is_scoped_oldest_first_and_rate_limited(self):
+        client, transport, credential, clock = self.client([(200, {}, [message()])])
+        with self.assertRaises(LiveError):
+            client.first_message(DM, 20)
+        credential.assert_not_called()
+        self.assertEqual(client.first_message(CID, 20), [message()])
+        self.assertEqual(transport.calls[0][1], {"limit": 1, "after": "0"})
+        self.assertEqual(client.remaining_requests, 19)
+
+    def test_single_message_uses_around_and_never_substitutes_a_neighbour(self):
+        row = message()
+        client, transport, _, _ = self.client([(200, {}, [row]), (200, {}, [message(sequence=2)]), (200, {}, [])])
+        self.assertEqual(client.message(CID, row["id"], 20), row)
+        self.assertEqual(transport.calls[0][0], f"/channels/{CID}/messages")
+        self.assertEqual(transport.calls[0][1], {"limit": 1, "around": row["id"]})
+        for _ in range(2):
+            with self.assertRaises(LiveError) as error:
+                client.message(CID, row["id"], 20)
+            self.assertEqual(error.exception.code, "not_found")
+
+    def test_message_route_rejects_unbounded_or_mixed_query_before_connection(self):
+        with patch("http.client.HTTPSConnection") as create:
+            for params in ({"after": "0", "limit": 100}, {"around": "1", "before": "2", "limit": 1},
+                           {"before": "0", "limit": 100}, {"before": "1", "limit": 101}):
+                with self.subTest(params=params), self.assertRaises(ReaderError):
+                    HTTPSGetTransport().send(f"/channels/{CID}/messages", params, SYNTHETIC, 5)
+            create.assert_not_called()
+
     def test_https_transport_hardcodes_get_and_discord_origin(self):
         response = Mock(status=200)
         response.read.return_value = b"[]"
@@ -240,13 +268,27 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(backend.last_success, {})
         self.assertEqual(backend.snapshots, {})
 
-    def test_scope_window_history_and_future_rejected_before_network(self):
+    def test_scope_invalid_window_and_future_rejected_before_network(self):
         backend, client = self.backend([])
-        for ids, start, end in ((["999"], SINCE, UNTIL), ([CID], "2026-09-01T00:00:00Z", UNTIL),
-                                ([CID], SINCE, "2026-10-11T00:00:00Z"), ([CID], "2026-10-08T00:00:00Z", UNTIL)):
+        for ids, start, end in ((["999"], SINCE, UNTIL), ([CID], "2014-01-01T00:00:00Z", UNTIL),
+                                ([CID], SINCE, "2026-10-11T00:00:00Z"), ([CID], UNTIL, SINCE)):
             with self.subTest(ids=ids, start=start), self.assertRaises(ReaderError):
                 backend.read_messages(ids, start, end)
         client.messages.assert_not_called()
+
+    def test_old_and_decade_wide_windows_work_with_legacy_date_cap_configuration(self):
+        old = {**message(), "id": str(int(boundary_id("2016-01-01T12:00:00Z")) + 1),
+               "timestamp": "2016-01-01T12:00:00Z"}
+        config = scope()
+        config.update(max_history_days=7, max_window_hours=24)
+        client = Mock()
+        client.messages.side_effect = [[old], [], [old], []]
+        backend = LiveReader(config, client=client, now=lambda: NOW, monotonic=lambda: 0)
+        for method in (backend.read_messages, backend.digest_context):
+            result = method([CID], "2015-01-01T00:00:00Z", UNTIL)
+            self.assertFalse(result["is_error"])
+            self.assertEqual(result["data"]["messages"][0]["id"], old["id"])
+        self.assertIsNone(backend.scope["history_date_limit"])
 
     def test_page_limit_is_error_not_silent_partial_digest(self):
         config = scope()
@@ -257,6 +299,7 @@ class BackendTests(unittest.TestCase):
         result = backend.digest_context([CID], SINCE, UNTIL)
         self.assertTrue(result["is_error"])
         self.assertEqual(result["data"]["error"]["code"], "page_limit")
+        self.assertIn("start_history_import", result["data"]["error"]["message"])
         self.assertEqual(backend.last_success, {})
 
     def test_wrong_channel_or_repeated_pagination_cannot_expand_scope(self):
@@ -273,9 +316,12 @@ class BackendTests(unittest.TestCase):
         result = backend.get_message(CID, row["id"])
         self.assertEqual(result["data"]["message"]["content"], row["content"])
         self.assertEqual(result["data"]["freshness"]["state"], "refreshed")
+        old = {**row, "id": "1234", "timestamp": "2015-01-01T00:00:00Z"}
+        client.message.return_value = old
+        self.assertEqual(backend.get_message(CID, "1234")["data"]["message"]["id"], "1234")
         with self.assertRaises(ReaderError):
-            backend.get_message(CID, "1234")
-        self.assertEqual(client.message.call_count, 1)
+            backend.get_message(CID, boundary_id("2026-10-11T00:00:00Z"))
+        self.assertEqual(client.message.call_count, 2)
 
     def test_live_mcp_error_and_annotations(self):
         backend, client = self.backend([LiveError("network_error", "No fresh result")])

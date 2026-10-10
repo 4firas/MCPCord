@@ -1,7 +1,5 @@
 {
   "mode": "discover_accessible",
-  "max_window_hours": 168,
-  "max_history_days": 7,
   "max_pages_per_channel": 10,
   "max_requests_per_refresh": 20
 }

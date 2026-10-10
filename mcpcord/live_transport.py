@@ -10,7 +10,7 @@ import ssl
 import time
 from urllib.parse import urlencode
 
-from .reader import ReaderError, integer, snowflake, strict_json
+from .reader import ReaderError, bounded_list, integer, obj, snowflake, strict_json
 
 KEYCHAIN_SERVICE = "local.codex.discord-export-reader"
 KEYCHAIN_ACCOUNT = "personal-discord-readonly"
@@ -37,8 +37,16 @@ class HTTPSGetTransport:
 
     def send(self, path, params, authorization, timeout):
         numeric = r"[1-9][0-9]{0,19}"
-        if re.fullmatch(rf"/channels/{numeric}/messages(?:/{numeric})?", path):
-            permitted_params = {"before", "limit"}
+        if re.fullmatch(rf"/channels/{numeric}/messages", path):
+            permitted_params = {"before", "after", "around", "limit"}
+            boundaries = set(params) & {"before", "after", "around"}
+            if len(boundaries) != 1 or set(params) != boundaries | {"limit"}:
+                raise LiveError("scope_error", "Message listing requires exactly one pagination boundary and a limit.")
+            key = next(iter(boundaries))
+            snowflake(params[key], allow_zero=key == "after")
+            integer(params["limit"], 1, 100)
+            if key in ("after", "around") and (params["limit"] != 1 or (key == "after" and params[key] != "0")):
+                raise LiveError("scope_error", "Only exact-message lookup or earliest-message verification is allowed.")
         elif re.fullmatch(rf"/channels/{numeric}/threads/search", path):
             permitted_params = {"sort_by", "sort_order", "archived", "offset"}
             if (set(params) != permitted_params or params.get("sort_by") != "last_message_time"
@@ -122,7 +130,7 @@ class ReadOnlyDiscordClient:
         self.remaining_requests = integer(maximum_attempts, 1, 20)
         self.attempts = 0
 
-    def _get(self, channel_id, message_id=None, before=None, deadline=None):
+    def _get(self, channel_id, message_id=None, before=None, deadline=None, first=False):
         channel_id = snowflake(channel_id)
         if channel_id not in self.allowed:
             raise LiveError("scope_error", "Channel is not in the operator-approved allowlist.")
@@ -131,7 +139,9 @@ class ReadOnlyDiscordClient:
         path = f"/channels/{channel_id}/messages"
         params = {}
         if message_id is not None:
-            path += "/" + snowflake(message_id)
+            params = {"limit": 1, "around": snowflake(message_id)}
+        elif first:
+            params = {"limit": 1, "after": "0"}
         else:
             params = {"limit": 100, "before": snowflake(before)}
         return self._request(path, params, deadline, channel_id, message_id is None)
@@ -224,7 +234,15 @@ class ReadOnlyDiscordClient:
         return self._get(channel_id, before=before, deadline=deadline)
 
     def message(self, channel_id, message_id, deadline):
-        return self._get(channel_id, message_id=message_id, deadline=deadline)
+        # Personal accounts use the listing endpoint; around can return a neighbour.
+        rows = bounded_list(self._get(channel_id, message_id=message_id, deadline=deadline), 1)
+        for row in rows:
+            if obj(row).get("id") == message_id:
+                return row
+        raise LiveError("not_found", "The exact message was not returned; a neighbouring message is not a match.")
+
+    def first_message(self, channel_id, deadline):
+        return self._get(channel_id, deadline=deadline, first=True)
 
     def _require_discovery(self):
         if not self.discovery:

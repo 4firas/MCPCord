@@ -97,6 +97,27 @@ store.commit_page(job['job_id'], CID, job['channels'][0]['before_id'], norm()['i
         self.assertEqual(self.store.metric("count"), 1)
         self.assertEqual(result["messages"][0]["content"], "Edited")
 
+    @unittest.skipIf(sys.platform == "win32", "Disk persistence is supported on POSIX only")
+    def test_schema_one_migration_preserves_messages_jobs_and_checkpoints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "history.sqlite3"
+            old = HistoryStore(path, enable_persistence=True, now=lambda: NOW)
+            job = old.create_job({CID: META}, timestamp(SINCE), timestamp(UNTIL), True)
+            old.commit_page(job["job_id"], CID, job["channels"][0]["before_id"], norm()["id"], [norm()], False)
+            old.db.execute("ALTER TABLE checkpoints DROP COLUMN page_evidence")
+            old.db.execute("UPDATE meta SET value=1 WHERE key='schema'")
+            old.close()
+            upgraded = HistoryStore(path, enable_persistence=True, now=lambda: NOW)
+            try:
+                self.assertEqual(upgraded.metric("schema"), 2)
+                self.assertEqual(upgraded.metric("count"), 1)
+                checkpoint = upgraded.job(job["job_id"])["channels"][0]
+                self.assertEqual(checkpoint["before_id"], norm()["id"])
+                self.assertEqual(checkpoint["pages"], 1)
+                self.assertIsNone(checkpoint["page_evidence"])
+            finally:
+                upgraded.close()
+
     def test_quota_failure_rolls_back_whole_page(self):
         self.store.max_messages = 1
         with self.assertRaises(ReaderError):
@@ -172,6 +193,7 @@ store.commit_page(job['job_id'], CID, job['channels'][0]['before_id'], norm()['i
 class HistoryTests(unittest.TestCase):
     def setUp(self):
         self.clock, self.client = Clock(), Mock()
+        self.client.first_message.return_value = []
         self.reader = DiscoveryReader(scope(), client=self.client, now=lambda: NOW, monotonic=self.clock.mono)
         self.reader.channels[CID] = dict(META)
         self.reader.guilds[GID] = guild()
@@ -212,6 +234,132 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(first["channels"][0]["before_id"], message()["id"])
         second = self.reader.continue_history_import(job["job_id"])["data"]
         self.assertEqual(second["state"], "traversed")
+
+    def test_over_100_pages_resume_to_2016_without_age_or_total_page_cutoff(self):
+        stamp = "2016-01-01T00:00:00Z"
+        rows = [{**message(), "id": str(int(boundary_id(stamp)) + i), "timestamp": stamp}
+                for i in range(12007, 0, -1)]
+        def page(cid, before, deadline):
+            self.assertEqual(cid, CID)
+            return [row for row in rows if int(row["id"]) < int(before)][:100]
+        self.client.messages.side_effect = page
+        self.client.first_message.return_value = [rows[-1]]
+        result = self.start()
+        slices = 0
+        while result["needs_continuation"]:
+            result = self.reader.continue_history_import(result["job_id"], max_pages=10)["data"]
+            slices += 1
+            self.assertIsNone(result["error"])
+            self.assertLessEqual(result["pages_this_slice"], 10)
+            self.assertIsNone(result["total_page_limit"])
+            self.assertLess(slices, 20)
+            if result["needs_continuation"]:
+                self.assertEqual(result["state"], "paused")
+                self.assertEqual(result["slice_stop_reason"], "page_budget")
+        self.assertEqual(result["state"], "traversed")
+        self.assertEqual(result["channels"][0]["pages"], 122)
+        self.assertEqual(result["stored_message_count"], 12007)
+        evidence = result["channels"][0]["page_evidence"]
+        self.assertEqual(evidence["returned_count"], 0)
+        self.assertEqual(evidence["requested_before"], rows[-1]["id"])
+        self.assertEqual(evidence["earliest_message_check"]["message_id"], rows[-1]["id"])
+        self.assertEqual(self.client.first_message.call_count, 1)
+
+    def test_premature_empty_page_is_not_completion_and_retry_preserves_cursor(self):
+        older = message(hour=1)
+        self.client.messages.side_effect = [[], [older], []]
+        self.client.first_message.return_value = [older]
+        job = self.start()
+        failed = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(failed["state"], "paused")
+        self.assertEqual(failed["error"]["code"], "history_gap")
+        self.assertTrue(failed["needs_continuation"])
+        self.assertEqual(failed["channels"][0]["before_id"], boundary_id(UNTIL))
+        self.assertEqual(failed["channels"][0]["pages"], 0)
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["state"], "traversed")
+        self.assertEqual(done["stored_message_count"], 1)
+
+    def test_start_verification_budget_error_cannot_mark_channel_finished(self):
+        self.client.messages.side_effect = [[message()], [], []]
+        self.client.first_message.side_effect = [LiveError("refresh_budget", "Wait"), [message()]]
+        job = self.start()
+        first = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(first["channels"][0]["before_id"], message()["id"])
+        self.assertEqual(first["channels"][0]["pages"], 1)
+        self.assertTrue(first["needs_continuation"])
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["state"], "traversed")
+        self.assertEqual(done["channels"][0]["pages"], 2)
+
+    def test_empty_history_records_both_empty_responses_without_exhaustive_claim(self):
+        self.client.messages.return_value = []
+        self.client.first_message.return_value = []
+        job = self.start()
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        evidence = done["channels"][0]["page_evidence"]
+        self.assertEqual(evidence["returned_count"], 0)
+        self.assertEqual(evidence["earliest_message_check"]["returned_count"], 0)
+        self.assertFalse(done["needs_continuation"])
+        self.assertFalse(done["exhaustive"])
+
+    def test_earliest_message_newer_than_fixed_until_is_not_a_gap(self):
+        self.client.messages.return_value = []
+        self.client.first_message.return_value = [message()]
+        job = self.reader.start_history_import(channel_ids=[CID], all_history=True, until="2020-01-01T00:00:00Z")["data"]
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["state"], "traversed")
+        self.assertEqual(done["stored_message_count"], 0)
+        self.assertIsNone(done["error"])
+
+    def test_resource_quota_pause_keeps_cursor_and_can_resume_after_capacity_is_available(self):
+        self.client.messages.return_value = [message(sequence=2), message(sequence=1)]
+        job = self.start()
+        store = self.reader.history_store
+        store.max_messages = 1
+        failed = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(failed["state"], "paused")
+        self.assertTrue(failed["needs_continuation"])
+        self.assertEqual(failed["channels"][0]["before_id"], boundary_id(UNTIL))
+        self.assertEqual(failed["stored_message_count"], 0)
+        store.max_messages = 10  # synthetic capacity recovery; no MCP tool can change quotas
+        self.client.messages.side_effect = [[message(sequence=2), message(sequence=1)], []]
+        self.client.first_message.return_value = [message(sequence=1)]
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["state"], "traversed")
+        self.assertEqual(done["stored_message_count"], 2)
+
+    def test_requested_lower_boundary_is_reported_separately_from_empty_end(self):
+        self.client.messages.return_value = [message(hour=12), message(hour=11), message(hour=10)]
+        job = self.reader.start_history_import(channel_ids=[CID], since="2026-10-09T11:00:00Z", until=UNTIL)["data"]
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["stored_message_count"], 2)  # since is inclusive
+        self.assertEqual(done["channels"][0]["page_evidence"]["stop_reason"], "requested_lower_bound")
+        self.assertFalse(done["needs_continuation"])
+        self.client.first_message.assert_not_called()
+
+    def test_short_unsorted_pages_use_minimum_id_without_skipping_older_rows(self):
+        self.client.messages.side_effect = [[message(hour=12), message(hour=14)], [message(hour=1)], []]
+        self.client.first_message.return_value = [message(hour=1)]
+        job = self.start()
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["stored_message_count"], 3)
+        self.assertEqual(self.client.messages.call_args_list[1].args[1], message(hour=12)["id"])
+        self.assertEqual(done["state"], "traversed")
+
+    def test_time_budget_pauses_after_committed_page_and_resumes(self):
+        def first_page(*_):
+            self.clock.time += 21
+            return [message()]
+        self.client.messages.side_effect = first_page
+        job = self.start()
+        first = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(first["slice_stop_reason"], "time_budget")
+        self.assertTrue(first["needs_continuation"])
+        self.client.messages.side_effect = None
+        self.client.messages.return_value = []
+        done = self.reader.continue_history_import(job["job_id"])["data"]
+        self.assertEqual(done["state"], "traversed")
 
     def test_duplicate_or_stalled_page_keeps_checkpoint_and_reports_partial(self):
         job = self.start()

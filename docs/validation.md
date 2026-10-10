@@ -2,7 +2,7 @@
 
 Tests use fabricated IDs, messages and credentials. They do not connect to Discord. The Windows credential test creates a uniquely named synthetic test item, reads it back, and deletes it; it never reads MCPCord's real credential item.
 
-Coverage includes exact author/mention/reply identity, missing content, timezone/DST boundaries, pagination drift, rate limits and indexing delays, authorization failures, scope checks, duplicate/edited messages, retention and quotas, cancellation, and crash recovery. A subprocess test exits abruptly during a SQLite page transaction and checks that both the page and checkpoint recover together.
+Coverage includes exact author/mention/reply identity, missing content, timezone/DST boundaries, pagination drift, rate limits and indexing delays, authorization failures, scope checks, duplicate/edited messages, retention and quotas, cancellation, and crash recovery. A synthetic history test follows 12,007 messages across 122 pages back to 2016, pausing and resuming between slices. Additional regressions cover premature empty pages, oldest-first verification, short/unsorted pages, cursor stalls, inclusive lower boundaries, time budgets, legacy date-cap configurations and database migration. A subprocess test exits abruptly during a SQLite page transaction and checks that both the page and checkpoint recover together.
 
 The CI matrix runs Python 3.11 and 3.14 on macOS, Windows and Linux. POSIX-only disk-permission and crash tests are skipped on Windows, where persistent history storage is explicitly unavailable. The Windows-native credential roundtrip runs only on Windows. All platforms run memory-history and mocked provider tests. This is not live Discord compatibility testing on every platform.
 

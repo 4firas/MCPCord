@@ -1,7 +1,5 @@
 # MCPCord
 
-Discord, minus the tab hunting. [Try the fictional demo](https://4firas.github.io/MCPCord/).
-
 Read DMs and server conversations from your local MCP client. Find messages by exact user ID, follow threads, pull a cited digest, or run an explicit history analysis. Every Discord request is a GET. No posting, reactions, joining threads, marking messages read, or background tracking.
 
 **Personal-account automation is against Discord's rules and can put your account at risk. Read-only code does not make a personal token read-scoped.** This is an experimental local tool, not an official Discord inbox integration. [Discord's policy](https://support.discord.com/hc/en-us/articles/115002192352-Automated-User-Accounts-Self-Bots)

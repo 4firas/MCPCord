@@ -4,5 +4,4 @@ recursive-include examples *.json
 recursive-include fixtures *.json
 recursive-include tests *.py
 recursive-include scripts *.py
-recursive-include website *.html *.css *.js *.svg .nojekyll
 global-exclude *.py[cod]

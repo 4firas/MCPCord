@@ -1,6 +1,0 @@
-{
-  "name": "mcpcord-website-checks",
-  "private": true,
-  "scripts": {"test:site": "node scripts/browser_check.cjs"},
-  "devDependencies": {"playwright": "1.62.1"}
-}

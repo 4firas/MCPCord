@@ -1,0 +1,79 @@
+{
+  "guild": {
+    "id": "222222222222222222",
+    "name": "Synthetic project"
+  },
+  "channel": {
+    "id": "111111111111111111",
+    "type": "GuildTextChat",
+    "categoryId": null,
+    "category": null,
+    "name": "project-updates",
+    "topic": "Synthetic fixture only"
+  },
+  "dateRange": {
+    "after": "2026-10-09T00:00:00Z",
+    "before": "2026-10-10T00:00:00Z"
+  },
+  "exportedAt": "2026-10-10T07:00:00Z",
+  "messages": [
+    {
+      "id": "123456789012345671",
+      "type": "Default",
+      "timestamp": "2026-10-09T07:00:00Z",
+      "timestampEdited": null,
+      "isPinned": false,
+      "content": "Design review is complete. Two small copy changes remain.",
+      "author": {
+        "id": "555555555555555555",
+        "name": "Ari",
+        "nickname": "Ari",
+        "isBot": false
+      },
+      "attachments": [],
+      "embeds": [],
+      "mentions": [],
+      "reactions": [],
+      "stickers": []
+    },
+    {
+      "id": "123456789012345672",
+      "type": "Default",
+      "timestamp": "2026-10-09T10:00:00+02:00",
+      "timestampEdited": "2026-10-09T08:45:00Z",
+      "isPinned": false,
+      "content": "Release approved for 14:00 UTC; checklist complete.",
+      "author": {
+        "id": "555555555555555555",
+        "name": "Ari",
+        "nickname": "Ari",
+        "isBot": false
+      },
+      "attachments": [],
+      "embeds": [],
+      "mentions": [],
+      "reactions": [],
+      "stickers": []
+    },
+    {
+      "id": "123456789012345674",
+      "type": "Default",
+      "timestamp": "2026-10-09T22:00:00Z",
+      "timestampEdited": null,
+      "isPinned": false,
+      "content": "Launch completed. No rollback needed.",
+      "author": {
+        "id": "555555555555555555",
+        "name": "Ari",
+        "nickname": "Ari",
+        "isBot": false
+      },
+      "attachments": [],
+      "embeds": [],
+      "mentions": [],
+      "reactions": [],
+      "stickers": []
+    }
+  ],
+  "messageCount": 3
+}

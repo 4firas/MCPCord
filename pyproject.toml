@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcpcord"
+version = "0.3.0"
+description = "Read-only Discord search and explicit history analysis over MCP."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE.md"]
+authors = [{name = "fourfiras"}]
+dependencies = ["tzdata>=2025.2; sys_platform == 'win32'"]
+
+[project.urls]
+Repository = "https://github.com/fourfiras/MCPCord"
+Issues = "https://github.com/fourfiras/MCPCord/issues"
+
+[project.scripts]
+mcpcord = "mcpcord.__main__:main"
+
+[project.optional-dependencies]
+dev = ["ruff>=0.11", "mypy>=1.15", "build>=1.2"]
+
+[tool.setuptools.packages.find]
+include = ["mcpcord*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "S"]
+ignore = ["S101", "S603", "S607", "B007"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S108"]
+"scripts/*" = ["E402"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_unused_ignores = true
+files = ["mcpcord"]

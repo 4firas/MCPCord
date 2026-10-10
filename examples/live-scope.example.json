@@ -1,0 +1,22 @@
+{
+  "channels": [
+    {
+      "id": "111111111111111111",
+      "guild_id": "222222222222222222",
+      "name": "REPLACE: approved server channel",
+      "guild_name": "REPLACE: server label",
+      "type": "GuildTextChat"
+    },
+    {
+      "id": "333333333333333333",
+      "guild_id": "@me",
+      "name": "REPLACE: approved existing DM",
+      "guild_name": "Direct Messages",
+      "type": "DirectTextChat"
+    }
+  ],
+  "max_window_hours": 24,
+  "max_history_days": 7,
+  "max_pages_per_channel": 5,
+  "max_requests_per_refresh": 10
+}
